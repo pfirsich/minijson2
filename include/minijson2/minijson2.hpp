@@ -75,6 +75,11 @@ public:
     // Mutable reference to escape strings in-place
     Parser(std::string& input);
 
+    Parser(Parser&&) = default;
+    Parser& operator=(Parser&&) = default;
+    Parser(const Parser&) = default;
+    Parser& operator=(const Parser&) = default;
+
     std::string_view input() const;
 
     Token next();
