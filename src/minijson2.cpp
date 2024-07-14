@@ -10,17 +10,6 @@ bool is_whitespace(char ch)
     return ch == ' ' || ch == '\t' || ch == '\n' || ch == '\t';
 }
 
-std::string_view trim(std::string_view str)
-{
-    const auto start = str.find_first_not_of(" \t\n\r");
-    if (start == std::string_view::npos) {
-        return std::string_view();
-    }
-    const auto end = str.find_last_not_of(" \t\n\r");
-    assert(end != std::string_view::npos);
-    return str.substr(start, end - start + 1);
-}
-
 template <typename T>
 std::optional<T> parse_number(std::string_view str)
 {
