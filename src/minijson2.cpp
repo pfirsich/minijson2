@@ -122,7 +122,7 @@ Context get_context(std::string_view str, size_t cursor)
     size_t line_end = str.size();
     for (size_t i = 0; i < str.size(); ++i) {
         const auto nl = str.find('\n', i);
-        if (nl > cursor) {
+        if (nl >= cursor) {
             line_end = nl;
             break;
         }
