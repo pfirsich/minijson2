@@ -15,4 +15,8 @@ if(MINIJSON2_BUILD_TEST)
   add_executable(minijson2-test src/minijson2-test.cpp)
   target_link_libraries(minijson2-test minijson2)
   target_compile_options(minijson2-test PRIVATE -Wall -Wextra -pedantic)
+
+  add_executable(ezparse src/ezparse.cpp)
+  target_link_libraries(ezparse minijson2)
+  target_compile_options(ezparse PRIVATE -Wall -Wextra -pedantic)
 endif()
