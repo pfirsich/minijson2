@@ -195,6 +195,11 @@ Parser::Parser(std::string& input) : input_buffer_(input), input_(input)
     expect_next_.push_back(ExpectNext::Value);
 }
 
+size_t Parser::get_location(const Token& token) const
+{
+    return token.string().data() - input_buffer_.data();
+}
+
 std::string_view Parser::input() const
 {
     return input_;

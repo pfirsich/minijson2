@@ -81,6 +81,7 @@ public:
     Parser& operator=(const Parser&) = default;
 
     std::string_view input() const;
+    size_t get_location(const Token& token) const;
 
     Token next();
 
