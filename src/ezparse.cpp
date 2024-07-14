@@ -1,8 +1,6 @@
 #include <iostream>
-#include <map>
-#include <memory_resource>
 #include <optional>
-#include <variant>
+#include <unordered_map>
 
 #include <minijson2/minijson2.hpp>
 
@@ -10,296 +8,245 @@ using namespace minijson2;
 
 ////////////////////////////////////////////////////////////
 
-class Json {
-public:
-    struct Invalid { };
-    struct Null { };
-    using Bool = bool;
-    using Number = double;
-    using String = std::pmr::string;
-    using Array = std::pmr::vector<Json>;
-    // map instead of unordered_map, because it supports incomplete value types
-    // We need a transparent comparator to enable .find with std::string_view
-    using Object = std::pmr::map<std::pmr::string, Json, std::less<>>;
+// todo: add parser to context?
+// todo: general getters for integers and floats that check range
 
-    enum class Type {
-        Invalid = 0,
-        Null,
-        Bool,
-        Number,
-        String,
-        Array,
-        Object,
+struct ParseContext {
+    struct Error {
+        size_t location;
+        std::string message;
     };
 
-    Json() : value_(Invalid {}) { }
-    Json(Null n) : value_(std::move(n)) { } // better move that empty struct! #highperformance
-    Json(bool b) : value_(b) { }
-    Json(double v) : value_(v) { }
-    Json(String s) : value_(std::move(s)) { }
-    Json(Array v) : value_(std::move(v)) { }
-    Json(Object m) : value_(std::move(m)) { }
-
-    // This is a bit brittle, but if we are being honest, doing a switch is not super robust either.
-    // I have messed that up before too.
-    Type type() const { return static_cast<Type>(value_.index()); }
-
-    template <typename T>
-    bool is() const
+    bool check(const Parser& parser, const Token& token, Token::Type type,
+        std::string_view type_name, std::string_view path)
     {
-        return std::holds_alternative<T>(value_);
-    }
-
-    bool isValid() const { return !is<Invalid>(); }
-    bool isNull() const { return is<Null>(); }
-    bool isBool() const { return is<Bool>(); }
-    bool isNumber() const { return is<Number>(); }
-    bool isString() const { return is<String>(); }
-    bool isArray() const { return is<Array>(); }
-    bool isObject() const { return is<Object>(); }
-
-    // The following "as" and "to" methods are weirdly named.
-    // I don't know how to call them. I just want it to be ergonomic (short!) and this is what I
-    // picked.
-
-    template <typename T>
-    const T& as() const
-    {
-        return std::get<T>(value_);
-    }
-
-    const Bool& asBool() const { return as<Bool>(); }
-    const Number& asNumber() const { return as<Number>(); }
-    const String& asString() const { return as<String>(); }
-    const Array& asArray() const { return as<Array>(); }
-    const Object& asObject() const { return as<Object>(); }
-
-    template <typename T>
-    const T* to() const
-    {
-        if (is<T>()) {
-            return &as<T>();
+        if (error) {
+            return false;
         }
-        return nullptr;
-    }
-
-    const Bool* toBool() const { return to<Bool>(); }
-    const Number* toNumber() const { return to<Number>(); }
-    const String* toString() const { return to<String>(); }
-    const Array* toArray() const { return to<Array>(); }
-    const Object* toObject() const { return to<Object>(); }
-
-    size_t size() const
-    {
-        if (!isValid() || isNull()) {
-            return 0;
-        } else if (isArray()) {
-            return std::get<Array>(value_).size();
-        } else if (isObject()) {
-            return std::get<Object>(value_).size();
-        } else {
-            return 1;
+        if (token.type() == Token::Type::Error) {
+            error = Error { token.error_location(), std::string(token.error_message()) };
+            return false;
         }
+        if (token.type() != type) {
+            auto message = std::string(path);
+            message.append(" must be ");
+            message.append(type_name);
+            error = Error { parser.get_location(token), std::move(message) };
+        }
+        return true;
     }
 
-    static const Json& getNonExistent()
-    {
-        static Json v;
-        return v;
-    }
+    std::optional<Error> error;
+};
 
-    const Json& operator[](std::string_view key) const
-    {
-        if (isObject()) {
-            const auto& obj = as<Object>();
-            const auto it = obj.find(key);
-            if (it == obj.end()) {
-                return getNonExistent();
+bool from_json(bool& v, Parser& parser, Token token, ParseContext& ctx, std::string path)
+{
+    if (!ctx.check(parser, token, Token::Type::Bool, "boolean", path)) {
+        return false;
+    }
+    v = parser.parse_bool(token);
+    return true;
+}
+
+// TODO: This should check for Int as well!
+bool from_json(uint64_t& v, Parser& parser, Token token, ParseContext& ctx, std::string path)
+{
+    if (!ctx.check(parser, token, Token::Type::UInt, "unsigned integer", path)) {
+        return false;
+    }
+    v = parser.parse_uint(token);
+    return true;
+}
+
+bool from_json(int64_t& v, Parser& parser, Token token, ParseContext& ctx, std::string path)
+{
+    if (!ctx.check(parser, token, Token::Type::Int, "integer", path)) {
+        return false;
+    }
+    v = parser.parse_uint(token);
+    return true;
+}
+
+// TODO: This should actually check for Int and UInt too!
+bool from_json(double& v, Parser& parser, Token token, ParseContext& ctx, std::string path)
+{
+    if (!ctx.check(parser, token, Token::Type::Float, "unsigned integer", path)) {
+        return false;
+    }
+    v = parser.parse_uint(token);
+    return true;
+}
+
+bool from_json(std::string& str, Parser& parser, Token token, ParseContext& ctx, std::string path)
+{
+    if (!ctx.check(parser, token, Token::Type::String, "string", path)) {
+        return false;
+    }
+    str.assign(parser.parse_string(token));
+    return true;
+}
+
+template <typename T>
+bool from_json(
+    std::optional<T>& opt, Parser& parser, Token token, ParseContext& ctx, std::string path)
+{
+    return from_json(opt.emplace(), parser, token, ctx, path);
+}
+
+template <typename T>
+bool from_json(
+    std::vector<T>& vec, Parser& parser, Token token, ParseContext& ctx, std::string path)
+{
+    if (!ctx.check(parser, token, Token::Type::Array, "array", path)) {
+        return false;
+    }
+    size_t i = 0;
+    auto elem = parser.next();
+    while (elem) {
+        const auto val_path = path + "[" + std::to_string(i) + "]";
+        if (!from_json(vec.emplace_back(), parser, elem, ctx, val_path)) {
+            return false;
+        }
+        i++;
+        elem = parser.next();
+    }
+    if (elem.type() == Token::Type::Error) {
+        ctx.error
+            = ParseContext::Error { elem.error_location(), std::string(elem.error_message()) };
+        return false;
+    }
+    return true;
+}
+
+template <typename T>
+struct type_meta;
+
+template <typename T, typename F>
+constexpr auto field(const char* name, F T::*f)
+{
+    return std::tuple(name, f);
+}
+
+template <typename... Args>
+constexpr auto make_fields(Args&&... args)
+{
+    return std::tuple(std::forward<Args>(args)...);
+}
+
+template <typename>
+constexpr bool is_optional_impl = false;
+
+template <typename T>
+constexpr bool is_optional_impl<std::optional<T>> = true;
+
+template <typename T>
+constexpr bool is_optional = is_optional_impl<std::remove_cvref_t<T>>;
+
+template <typename T>
+bool from_json(T& obj, Parser& parser, Token token, ParseContext& ctx, std::string path = "")
+{
+    if (!ctx.check(parser, token, Token::Type::Object, "object", path)) {
+        return false;
+    }
+    const auto obj_location = parser.get_location(token);
+
+    bool known_key = false;
+    std::string_view key_str;
+    std::unordered_map<std::string, bool> keys_found;
+
+    const auto apply_field = [&](auto& field) {
+        const auto field_name = std::get<0>(field);
+        auto& obj_field = obj.*std::get<1>(field);
+        if constexpr (!is_optional<decltype(obj_field)>) {
+            keys_found.emplace(field_name, false);
+        }
+        if (key_str == field_name) {
+            known_key = true;
+            keys_found[field_name] = true;
+            if (!from_json(obj_field, parser, parser.next(), ctx, path + "." + field_name)) {
+                return false;
             }
-            return it->second;
-        } else {
-            return getNonExistent();
         }
-    }
+        return true;
+    };
 
-    const Json& operator[](size_t index) const
-    {
-        if (isArray() && index < size()) {
-            return asArray()[index];
-        } else {
-            return getNonExistent();
+    const auto& fields = type_meta<T>::fields;
+    auto key = parser.next();
+    while (key) {
+        key_str = parser.parse_string(key);
+        known_key = false;
+
+        if (!std::apply(
+                [&](auto&... fields_args) { return (apply_field(fields_args) && ...); }, fields)) {
+            return false;
         }
-    }
 
-private:
-    std::variant<Invalid, Null, Bool, Number, String, Array, Object> value_;
-};
-
-Json to_dom(Parser& parser, const Token& token, std::pmr::memory_resource* mem_res)
-{
-    switch (token.type()) {
-    case Token::Type::Null:
-        return Json(Json::Null {});
-    case Token::Type::String:
-        return Json(Json::String(parser.parse_string(token), mem_res));
-    case Token::Type::Int:
-    case Token::Type::UInt:
-    case Token::Type::Float:
-        return Json(parser.parse_float(token));
-    case Token::Type::Bool:
-        return Json(parser.parse_bool(token));
-    case Token::Type::Array: {
-        Json::Array array(mem_res);
-        while (const auto elem = parser.next()) {
-            array.push_back(to_dom(parser, elem, mem_res));
+        if (!known_key) {
+            ctx.error = ParseContext::Error { parser.get_location(key),
+                path + ": Unknown key '" + std::string(key_str) + "'" };
+            return false;
         }
-        return array;
-    }
-    case Token::Type::Object: {
-        Json::Object object(mem_res);
-        while (const auto key = parser.next()) {
-            assert(key.type() == Token::Type::String);
-            object.emplace(parser.parse_string(key), to_dom(parser, parser.next(), mem_res));
-        }
-        return object;
-    }
-    case Token::Type::Error: {
-        const auto ctx = get_context(parser.input(), token.error_location());
-        std::cerr << "Line " << ctx.line_number << std::endl;
-        std::cerr << ctx.line << std::endl;
-        std::cerr << std::string(ctx.column, ' ') << "^" << std::endl;
-        throw std::runtime_error("Could not parse JSON");
-    }
-    default:
-        throw std::runtime_error("Could not parse JSON");
-    }
-}
 
-struct TrackProxy {
-public:
-    explicit TrackProxy(const Json& json, std::string path = "")
-        : json_(json)
-        , path_(std::move(path))
-    {
+        key = parser.next();
     }
 
-    TrackProxy operator[](std::string_view key) const
-    {
-        return TrackProxy(
-            json_[key], !path_.empty() ? (path_ + "." + std::string(key)) : std::string(key));
-    }
-
-    TrackProxy operator[](size_t idx) const
-    {
-        return TrackProxy(json_[idx], path_ + "[" + std::to_string(idx) + "]");
-    }
-
-    const Json* operator->() const { return &json_; }
-
-    const std::string& path() const { return path_; }
-
-private:
-    const Json& json_;
-    std::string path_;
-};
-
-////////////////////////////////////////////////////////////
-
-#define GET_OBJECT                                                                                 \
-    if (!json->isObject()) {                                                                       \
-        std::cerr << json.path() << " must be an object" << std::endl;                             \
-        return false;                                                                              \
-    }
-
-#define GET_FIELD(obj, field)                                                                      \
-    if (!from_json(obj.field, json[#field])) {                                                     \
-        return false;                                                                              \
-    }
-
-bool from_json(bool& val, const TrackProxy& json)
-{
-    if (!json->isBool()) {
-        std::cerr << json.path() << " must be a boolean" << std::endl;
+    if (key.type() == Token::Type::Error) {
+        ctx.error = ParseContext::Error { key.error_location(), std::string(key.error_message()) };
         return false;
     }
-    val = json->asBool();
-    return true;
-}
 
-bool from_json(int64_t& val, const TrackProxy& json)
-{
-    if (!json->isNumber()) {
-        std::cerr << json.path() << " must be an integer" << std::endl;
-        return false;
-    }
-    const auto raw = json->asNumber();
-    val = static_cast<int64_t>(raw);
-    if (static_cast<double>(val) != raw) {
-        std::cerr << json.path() << " must be an integer" << std::endl;
-        return false;
-    }
-    return true;
-}
-
-bool from_json(uint64_t& val, const TrackProxy& json)
-{
-    if (!json->isNumber()) {
-        return false;
-        std::cerr << json.path() << " must be an unsigned integer" << std::endl;
-    }
-    const auto raw = json->asNumber();
-    val = static_cast<uint64_t>(raw);
-    if (static_cast<double>(val) != raw) {
-        std::cerr << json.path() << " must be an unsigned integer" << std::endl;
-        return false;
-    }
-    return true;
-}
-
-bool from_json(double& val, const TrackProxy& json)
-{
-    if (!json->isNumber()) {
-        std::cerr << json.path() << " must be a float" << std::endl;
-        return false;
-    }
-    val = json->asNumber();
-    return true;
-}
-
-bool from_json(std::string& val, const TrackProxy& json)
-{
-    if (!json->isString()) {
-        std::cerr << json.path() << " must be a string" << std::endl;
-        return false;
-    }
-    val = json->asString();
-    return true;
-}
-
-template <typename T>
-bool from_json(std::optional<T>& opt, const TrackProxy& json)
-{
-    if (json->isValid()) {
-        return from_json(opt.emplace(), json);
-    }
-    return true;
-}
-
-template <typename T>
-bool from_json(std::vector<T>& vec, const TrackProxy& json)
-{
-    if (!json->isArray()) {
-        std::cerr << json.path() << " must be a array" << std::endl;
-        return false;
-    }
-    vec.resize(json->size());
-    for (size_t i = 0; i < json->size(); ++i) {
-        if (!from_json(vec[i], json[i])) {
+    for (const auto& [key, found] : keys_found) {
+        if (!found) {
+            ctx.error = ParseContext::Error { obj_location, path + ": Missing key '" + key + "'" };
             return false;
         }
     }
     return true;
 }
+
+// I know macros are evil, but until we have reflection there is no way to make this ergonomic and
+// robust, but to use macros.
+#define COUNT_ARGS(...) COUNT_ARGS_(__VA_ARGS__, RSEQ_N())
+#define COUNT_ARGS_(...) ARG_N(__VA_ARGS__)
+#define ARG_N(_1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13, _14, _15, _16, _17, _18,     \
+    _19, _20, N, ...)                                                                              \
+    N
+#define RSEQ_N() 20, 19, 18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0
+
+#define CONCATENATE(arg1, arg2) CONCATENATE1(arg1, arg2)
+#define CONCATENATE1(arg1, arg2) CONCATENATE2(arg1, arg2)
+#define CONCATENATE2(arg1, arg2) arg1##arg2
+
+// Utility macros to generate the fields
+#define FIELD_PAIR_1(type, arg) field(#arg, &type::arg)
+#define FIELD_PAIR_2(type, arg, ...) FIELD_PAIR_1(type, arg), FIELD_PAIR_1(type, __VA_ARGS__)
+#define FIELD_PAIR_3(type, arg, ...) FIELD_PAIR_1(type, arg), FIELD_PAIR_2(type, __VA_ARGS__)
+#define FIELD_PAIR_4(type, arg, ...) FIELD_PAIR_1(type, arg), FIELD_PAIR_3(type, __VA_ARGS__)
+#define FIELD_PAIR_5(type, arg, ...) FIELD_PAIR_1(type, arg), FIELD_PAIR_4(type, __VA_ARGS__)
+#define FIELD_PAIR_6(type, arg, ...) FIELD_PAIR_1(type, arg), FIELD_PAIR_5(type, __VA_ARGS__)
+#define FIELD_PAIR_7(type, arg, ...) FIELD_PAIR_1(type, arg), FIELD_PAIR_6(type, __VA_ARGS__)
+#define FIELD_PAIR_8(type, arg, ...) FIELD_PAIR_1(type, arg), FIELD_PAIR_7(type, __VA_ARGS__)
+#define FIELD_PAIR_9(type, arg, ...) FIELD_PAIR_1(type, arg), FIELD_PAIR_8(type, __VA_ARGS__)
+#define FIELD_PAIR_10(type, arg, ...) FIELD_PAIR_1(type, arg), FIELD_PAIR_9(type, __VA_ARGS__)
+#define FIELD_PAIR_11(type, arg, ...) FIELD_PAIR_1(type, arg), FIELD_PAIR_10(type, __VA_ARGS__)
+#define FIELD_PAIR_12(type, arg, ...) FIELD_PAIR_1(type, arg), FIELD_PAIR_11(type, __VA_ARGS__)
+#define FIELD_PAIR_13(type, arg, ...) FIELD_PAIR_1(type, arg), FIELD_PAIR_12(type, __VA_ARGS__)
+#define FIELD_PAIR_14(type, arg, ...) FIELD_PAIR_1(type, arg), FIELD_PAIR_13(type, __VA_ARGS__)
+#define FIELD_PAIR_15(type, arg, ...) FIELD_PAIR_1(type, arg), FIELD_PAIR_14(type, __VA_ARGS__)
+#define FIELD_PAIR_16(type, arg, ...) FIELD_PAIR_1(type, arg), FIELD_PAIR_15(type, __VA_ARGS__)
+#define FIELD_PAIR_17(type, arg, ...) FIELD_PAIR_1(type, arg), FIELD_PAIR_16(type, __VA_ARGS__)
+#define FIELD_PAIR_18(type, arg, ...) FIELD_PAIR_1(type, arg), FIELD_PAIR_17(type, __VA_ARGS__)
+#define FIELD_PAIR_19(type, arg, ...) FIELD_PAIR_1(type, arg), FIELD_PAIR_18(type, __VA_ARGS__)
+#define FIELD_PAIR_20(type, arg, ...) FIELD_PAIR_1(type, arg), FIELD_PAIR_19(type, __VA_ARGS__)
+
+// Select the appropriate FIELD_PAIR_X macro based on the number of arguments
+#define FIELD_PAIRS(type, ...) CONCATENATE(FIELD_PAIR_, COUNT_ARGS(__VA_ARGS__))(type, __VA_ARGS__)
+
+#define TYPE_META(type, ...)                                                                       \
+    template <>                                                                                    \
+    struct type_meta<type> {                                                                       \
+        static constexpr auto fields = make_fields(FIELD_PAIRS(type, __VA_ARGS__));                \
+    };
 
 ////////////////////////////////////////////////////////////
 
@@ -307,42 +254,31 @@ struct Asset {
     std::string generator;
     std::string version;
 };
+TYPE_META(Asset, generator, version)
+
+// The macro is much nicer than this:
+/*template <>
+struct type_meta<Asset> {
+    // clang-format off
+    static constexpr auto fields = make_fields(
+        field("generator", &Asset::generator),
+        field("version", &Asset::version)
+    );
+    // clang-format on
+};*/
 
 struct Scene {
     std::string name;
     std::vector<size_t> nodes;
     std::optional<size_t> camera;
 };
+TYPE_META(Scene, name, nodes, camera)
 
 struct Gltf {
     Asset asset;
     std::vector<Scene> scenes;
 };
-
-bool from_json(Asset& asset, const TrackProxy& json)
-{
-    GET_OBJECT;
-    GET_FIELD(asset, generator);
-    GET_FIELD(asset, version);
-    return true;
-}
-
-bool from_json(Scene& scene, const TrackProxy& json)
-{
-    GET_OBJECT;
-    GET_FIELD(scene, name);
-    GET_FIELD(scene, nodes);
-    GET_FIELD(scene, camera);
-    return true;
-}
-
-bool from_json(Gltf& gltf, const TrackProxy& json)
-{
-    GET_OBJECT;
-    GET_FIELD(gltf, asset);
-    GET_FIELD(gltf, scenes);
-    return true;
-}
+TYPE_META(Gltf, asset, scenes)
 
 int main()
 {
@@ -366,13 +302,16 @@ int main()
         }
     )");
 
-    std::pmr::monotonic_buffer_resource pool;
     Parser parser(input);
-    const auto json = to_dom(parser, parser.next(), &pool);
+    ParseContext ctx;
 
     Gltf gltf;
-    if (!from_json(gltf, TrackProxy(json))) {
-        std::cerr << "Error reading document" << std::endl;
+    if (!from_json(gltf, parser, parser.next(), ctx)) {
+        std::cerr << "Error: " << ctx.error.value().message << std::endl;
+        const auto err_ctx = get_context(parser.input(), ctx.error.value().location);
+        std::cerr << "Line " << err_ctx.line_number << std::endl;
+        std::cerr << err_ctx.line << std::endl;
+        std::cerr << std::string(err_ctx.column, ' ') << "^" << std::endl;
         return 1;
     }
 
@@ -384,7 +323,7 @@ int main()
             std::cout << "scenes[" << s << "].camera: " << *gltf.scenes[s].camera << std::endl;
         }
         for (size_t n = 0; n < gltf.scenes[s].nodes.size(); ++n) {
-            std::cout << "scenes[" << s << "].nodes[" << n << "] : " << gltf.scenes[s].nodes[n]
+            std::cout << "scenes[" << s << "].nodes[" << n << "]: " << gltf.scenes[s].nodes[n]
                       << std::endl;
         }
     }
