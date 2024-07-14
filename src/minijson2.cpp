@@ -4,8 +4,6 @@
 #include <charconv>
 #include <optional>
 
-#include <iostream> // DEBUG
-
 namespace {
 bool is_whitespace(char ch)
 {
@@ -21,13 +19,6 @@ std::string_view trim(std::string_view str)
     const auto end = str.find_last_not_of(" \t\n\r");
     assert(end != std::string_view::npos);
     return str.substr(start, end - start + 1);
-}
-
-void print_location(std::string_view str, size_t cursor)
-{
-    std::cout << trim(str) << std::endl;
-    std::string space(cursor, ' ');
-    std::cout << space << "^" << std::endl;
 }
 
 template <typename T>
@@ -350,11 +341,9 @@ Token Parser::on_object_value()
 {
     skip_whitespace();
     if (cursor_ >= input_.size()) {
-        std::cout << "unterminated" << std::endl;
         return error_token("Unterminated object");
     }
     if (input_[cursor_] != ':') {
-        std::cout << "no colon" << std::endl;
         return error_token("Expected ':' after object key");
     }
     cursor_++; // skip colon
