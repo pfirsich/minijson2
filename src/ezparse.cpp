@@ -1,4 +1,6 @@
+#include <concepts>
 #include <iostream>
+#include <limits>
 #include <optional>
 #include <unordered_map>
 
@@ -8,112 +10,185 @@ using namespace minijson2;
 
 ////////////////////////////////////////////////////////////
 
-// todo: add parser to context?
-// todo: general getters for integers and floats that check range
-
 struct ParseContext {
     struct Error {
         size_t location;
         std::string message;
     };
 
-    bool check(const Parser& parser, const Token& token, Token::Type type,
-        std::string_view type_name, std::string_view path)
+    template <typename... Args>
+    ParseContext(Args&&... args) : parser(std::forward<Args>(args)...)
     {
-        if (error) {
-            return false;
-        }
-        if (token.type() == Token::Type::Error) {
-            error = Error { token.error_location(), std::string(token.error_message()) };
-            return false;
-        }
-        if (token.type() != type) {
-            auto message = std::string(path);
-            message.append(" must be ");
-            message.append(type_name);
-            error = Error { parser.get_location(token), std::move(message) };
-        }
-        return true;
     }
 
+    bool set_error(size_t location, std::string message)
+    {
+        error = { location, std::move(message) };
+        return false;
+    }
+
+    bool set_error(const Token& token, std::string message)
+    {
+        return set_error(parser.get_location(token), std::move(message));
+    }
+
+    bool set_error(const Token& error_token)
+    {
+        assert(error_token.type() == Token::Type::Error);
+        return set_error(error_token.error_location(), std::string(error_token.error_message()));
+    }
+
+    Parser parser;
     std::optional<Error> error;
 };
 
-bool from_json(bool& v, Parser& parser, Token token, ParseContext& ctx, std::string path)
+template <typename... Args>
+std::string concat_string(Args&&... args)
 {
-    if (!ctx.check(parser, token, Token::Type::Bool, "boolean", path)) {
+    std::string str;
+    auto append = [&str](const auto& part) { str.append(part); };
+    (append(std::forward<Args>(args)), ...);
+    return str;
+}
+
+template <typename T>
+bool from_json(T& val, ParseContext& ctx, const Token& token, const std::string& path)
+{
+    if (ctx.error) {
         return false;
     }
-    v = parser.parse_bool(token);
+    if (token.type() == Token::Type::Error) {
+        return ctx.set_error(token);
+    }
+    return from_json_impl(val, ctx, token, path);
+}
+
+template <typename T>
+bool from_json(T& val, ParseContext& ctx)
+{
+    const auto token = ctx.parser.next();
+    return from_json(val, ctx, token, "");
+}
+
+bool check_type(ParseContext& ctx, const Token& token, const std::string& path, Token::Type type,
+    std::string_view type_name)
+{
+    if (token.type() != type) {
+        return ctx.set_error(token, concat_string(path, " must be ", type_name));
+    }
     return true;
 }
 
-// TODO: This should check for Int as well!
-bool from_json(uint64_t& v, Parser& parser, Token token, ParseContext& ctx, std::string path)
+bool from_json_impl(bool& v, ParseContext& ctx, const Token& token, const std::string& path)
 {
-    if (!ctx.check(parser, token, Token::Type::UInt, "unsigned integer", path)) {
+    if (!check_type(ctx, token, path, Token::Type::Bool, "boolean")) {
         return false;
     }
-    v = parser.parse_uint(token);
+    v = ctx.parser.parse_bool(token);
     return true;
 }
 
-bool from_json(int64_t& v, Parser& parser, Token token, ParseContext& ctx, std::string path)
+template <std::integral Target, std::integral Source>
+constexpr bool can_convert(Source val)
 {
-    if (!ctx.check(parser, token, Token::Type::Int, "integer", path)) {
-        return false;
+    const auto min = std::numeric_limits<Target>::min();
+    const auto max = std::numeric_limits<Target>::max();
+
+    if constexpr (std::is_signed_v<Source> && std::is_signed_v<Target>) {
+        return (min <= val) && (val <= max);
+    } else if constexpr (std::is_signed_v<Source> && std::is_unsigned_v<Target>) {
+        return (val >= 0) && (static_cast<std::make_unsigned_t<Source>>(val) <= max);
+    } else if constexpr (std::is_unsigned_v<Source> && std::is_signed_v<Target>) {
+        return val <= static_cast<std::make_unsigned_t<Target>>(max);
+    } else if constexpr (std::is_unsigned_v<Source> && std::is_unsigned_v<Target>) {
+        return val <= max;
     }
-    v = parser.parse_uint(token);
+}
+
+template <typename T>
+auto parse_integer(ParseContext& ctx, const Token& token)
+{
+    if constexpr (std::is_signed_v<T>) {
+        return ctx.parser.parse_int(token);
+    } else {
+        return ctx.parser.parse_uint(token);
+    }
+}
+
+template <typename T>
+concept non_bool_int = std::integral<T> && !std::is_same_v<T, bool>;
+
+template <non_bool_int T>
+bool from_json_impl(T& v, ParseContext& ctx, const Token& token, const std::string& path)
+{
+    if constexpr (std::is_signed_v<T>) {
+        if (token.type() != Token::Type::Int && token.type() != Token::Type::UInt) {
+            return ctx.set_error(token, concat_string(path, " must be integer"));
+        };
+    } else {
+        if (token.type() != Token::Type::UInt) {
+            return ctx.set_error(token, concat_string(path, " must be unsigned integer"));
+        };
+    }
+
+    const auto raw_val = parse_integer<T>(ctx, token);
+    if (!can_convert<T>(raw_val)) {
+        const auto min = std::to_string(std::numeric_limits<T>::min());
+        const auto max = std::to_string(std::numeric_limits<T>::max());
+        return ctx.set_error(
+            token, concat_string(path, " must be integer in range [", min, ", ", max, "]"));
+    }
+    v = static_cast<T>(raw_val);
     return true;
 }
 
-// TODO: This should actually check for Int and UInt too!
-bool from_json(double& v, Parser& parser, Token token, ParseContext& ctx, std::string path)
+template <std::floating_point T>
+bool from_json_impl(T& v, ParseContext& ctx, const Token& token, const std::string& path)
 {
-    if (!ctx.check(parser, token, Token::Type::Float, "unsigned integer", path)) {
-        return false;
-    }
-    v = parser.parse_uint(token);
+    if (token.type() != Token::Type::Int && token.type() != Token::Type::UInt
+        && token.type() != Token::Type::Float) {
+        return ctx.set_error(token, concat_string(path, " must be a number"));
+    };
+    v = static_cast<T>(ctx.parser.parse_float(token));
     return true;
 }
 
-bool from_json(std::string& str, Parser& parser, Token token, ParseContext& ctx, std::string path)
+bool from_json_impl(
+    std::string& str, ParseContext& ctx, const Token& token, const std::string& path)
 {
-    if (!ctx.check(parser, token, Token::Type::String, "string", path)) {
+    if (!check_type(ctx, token, path, Token::Type::String, "string")) {
         return false;
     }
-    str.assign(parser.parse_string(token));
+    str.assign(ctx.parser.parse_string(token));
     return true;
 }
 
 template <typename T>
-bool from_json(
-    std::optional<T>& opt, Parser& parser, Token token, ParseContext& ctx, std::string path)
+bool from_json_impl(
+    std::optional<T>& opt, ParseContext& ctx, const Token& token, const std::string& path)
 {
-    return from_json(opt.emplace(), parser, token, ctx, path);
+    return from_json(opt.emplace(), ctx, token, path);
 }
 
 template <typename T>
-bool from_json(
-    std::vector<T>& vec, Parser& parser, Token token, ParseContext& ctx, std::string path)
+bool from_json_impl(
+    std::vector<T>& vec, ParseContext& ctx, const Token& token, const std::string& path)
 {
-    if (!ctx.check(parser, token, Token::Type::Array, "array", path)) {
+    if (!check_type(ctx, token, path, Token::Type::Array, "array")) {
         return false;
     }
     size_t i = 0;
-    auto elem = parser.next();
+    auto elem = ctx.parser.next();
     while (elem) {
-        const auto val_path = path + "[" + std::to_string(i) + "]";
-        if (!from_json(vec.emplace_back(), parser, elem, ctx, val_path)) {
+        const auto val_path = concat_string(path, "[", std::to_string(i), "]");
+        if (!from_json(vec.emplace_back(), ctx, elem, val_path)) {
             return false;
         }
         i++;
-        elem = parser.next();
+        elem = ctx.parser.next();
     }
     if (elem.type() == Token::Type::Error) {
-        ctx.error
-            = ParseContext::Error { elem.error_location(), std::string(elem.error_message()) };
-        return false;
+        return ctx.set_error(elem);
     }
     return true;
 }
@@ -143,12 +218,12 @@ template <typename T>
 constexpr bool is_optional = is_optional_impl<std::remove_cvref_t<T>>;
 
 template <typename T>
-bool from_json(T& obj, Parser& parser, Token token, ParseContext& ctx, std::string path = "")
+bool from_json_impl(T& obj, ParseContext& ctx, const Token& token, const std::string& path)
 {
-    if (!ctx.check(parser, token, Token::Type::Object, "object", path)) {
+    if (!check_type(ctx, token, path, Token::Type::Object, "object")) {
         return false;
     }
-    const auto obj_location = parser.get_location(token);
+    const auto obj_location = ctx.parser.get_location(token);
 
     bool known_key = false;
     std::string_view key_str;
@@ -163,7 +238,8 @@ bool from_json(T& obj, Parser& parser, Token token, ParseContext& ctx, std::stri
         if (key_str == field_name) {
             known_key = true;
             keys_found[field_name] = true;
-            if (!from_json(obj_field, parser, parser.next(), ctx, path + "." + field_name)) {
+            const auto field_path = concat_string(path, ".", field_name);
+            if (!from_json(obj_field, ctx, ctx.parser.next(), field_path)) {
                 return false;
             }
         }
@@ -171,9 +247,9 @@ bool from_json(T& obj, Parser& parser, Token token, ParseContext& ctx, std::stri
     };
 
     const auto& fields = type_meta<T>::fields;
-    auto key = parser.next();
+    auto key = ctx.parser.next();
     while (key) {
-        key_str = parser.parse_string(key);
+        key_str = ctx.parser.parse_string(key);
         known_key = false;
 
         if (!std::apply(
@@ -182,23 +258,19 @@ bool from_json(T& obj, Parser& parser, Token token, ParseContext& ctx, std::stri
         }
 
         if (!known_key) {
-            ctx.error = ParseContext::Error { parser.get_location(key),
-                path + ": Unknown key '" + std::string(key_str) + "'" };
-            return false;
+            return ctx.set_error(key, concat_string(path, ": Unknown key '", key_str, "'"));
         }
 
-        key = parser.next();
+        key = ctx.parser.next();
     }
 
     if (key.type() == Token::Type::Error) {
-        ctx.error = ParseContext::Error { key.error_location(), std::string(key.error_message()) };
-        return false;
+        return ctx.set_error(key);
     }
 
     for (const auto& [key, found] : keys_found) {
         if (!found) {
-            ctx.error = ParseContext::Error { obj_location, path + ": Missing key '" + key + "'" };
-            return false;
+            return ctx.set_error(obj_location, concat_string(path, ": Missing key '", key, "'"));
         }
     }
     return true;
@@ -253,8 +325,9 @@ bool from_json(T& obj, Parser& parser, Token token, ParseContext& ctx, std::stri
 struct Asset {
     std::string generator;
     std::string version;
+    uint16_t num_version;
 };
-TYPE_META(Asset, generator, version)
+TYPE_META(Asset, generator, version, num_version)
 
 // The macro is much nicer than this:
 /*template <>
@@ -269,10 +342,11 @@ struct type_meta<Asset> {
 
 struct Scene {
     std::string name;
+    float weight;
     std::vector<size_t> nodes;
     std::optional<size_t> camera;
 };
-TYPE_META(Scene, name, nodes, camera)
+TYPE_META(Scene, name, weight, nodes, camera)
 
 struct Gltf {
     Asset asset;
@@ -286,15 +360,18 @@ int main()
         {
             "asset": {
                 "generator": "joel",
-                "version": "6.9"
+                "version": "6.9",
+                "num_version": 15
             },
             "scenes": [
                 {
                     "name": "scene A",
+                    "weight": 1, 
                     "nodes": [0, 1, 2, 3, 4]
                 },
                 {
                     "name": "scene B",
+                    "weight": 1.5,
                     "nodes": [5, 6, 7, 8],
                     "camera": 5
                 }
@@ -302,13 +379,11 @@ int main()
         }
     )");
 
-    Parser parser(input);
-    ParseContext ctx;
-
+    ParseContext ctx(input);
     Gltf gltf;
-    if (!from_json(gltf, parser, parser.next(), ctx)) {
+    if (!from_json(gltf, ctx)) {
         std::cerr << "Error: " << ctx.error.value().message << std::endl;
-        const auto err_ctx = get_context(parser.input(), ctx.error.value().location);
+        const auto err_ctx = get_context(ctx.parser.input(), ctx.error.value().location);
         std::cerr << "Line " << err_ctx.line_number << std::endl;
         std::cerr << err_ctx.line << std::endl;
         std::cerr << std::string(err_ctx.column, ' ') << "^" << std::endl;
@@ -317,8 +392,10 @@ int main()
 
     std::cout << "asset.generator: " << gltf.asset.generator << std::endl;
     std::cout << "asset.version: " << gltf.asset.version << std::endl;
+    std::cout << "asset.num_version: " << gltf.asset.num_version << std::endl;
     for (size_t s = 0; s < gltf.scenes.size(); ++s) {
         std::cout << "scenes[" << s << "].name: " << gltf.scenes[s].name << std::endl;
+        std::cout << "scenes[" << s << "].weight: " << gltf.scenes[s].weight << std::endl;
         if (gltf.scenes[s].camera) {
             std::cout << "scenes[" << s << "].camera: " << *gltf.scenes[s].camera << std::endl;
         }
