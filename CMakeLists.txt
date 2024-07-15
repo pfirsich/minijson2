@@ -10,13 +10,12 @@ target_include_directories(minijson2 PUBLIC include/)
 target_compile_options(minijson2 PRIVATE -Wall -Wextra -pedantic)
 
 option(MINIJSON2_BUILD_TEST "Build the minijson2-test executable" OFF)
-
 if(MINIJSON2_BUILD_TEST)
   add_executable(minijson2-test src/minijson2-test.cpp)
   target_link_libraries(minijson2-test minijson2)
   target_compile_options(minijson2-test PRIVATE -Wall -Wextra -pedantic)
 
-  add_executable(ezparse src/ezparse.cpp)
-  target_link_libraries(ezparse minijson2)
-  target_compile_options(ezparse PRIVATE -Wall -Wextra -pedantic)
+  add_executable(structread-example src/structread-example.cpp)
+  target_link_libraries(structread-example minijson2)
+  target_compile_options(structread-example PRIVATE -Wall -Wextra -pedantic)
 endif()

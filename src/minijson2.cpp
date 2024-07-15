@@ -451,4 +451,34 @@ Token Parser::error_token(const char* message)
     expect_next_.push_back(ExpectNext::Error); // return errors forever
     return Token(cursor_, message);
 }
+
+namespace structread {
+    bool check_type(ParseContext& ctx, const Token& token, const std::string& path,
+        Token::Type type, std::string_view type_name)
+    {
+        if (token.type() != type) {
+            return ctx.set_error(token, concat_string(path, " must be ", type_name));
+        }
+        return true;
+    }
+
+    bool from_json_impl(bool& v, ParseContext& ctx, const Token& token, const std::string& path)
+    {
+        if (!check_type(ctx, token, path, Token::Type::Bool, "boolean")) {
+            return false;
+        }
+        v = ctx.parser.parse_bool(token);
+        return true;
+    }
+
+    bool from_json_impl(
+        std::string& str, ParseContext& ctx, const Token& token, const std::string& path)
+    {
+        if (!check_type(ctx, token, path, Token::Type::String, "string")) {
+            return false;
+        }
+        str.assign(ctx.parser.parse_string(token));
+        return true;
+    }
+}
 }
