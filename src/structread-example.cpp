@@ -9,21 +9,22 @@ struct Asset {
     std::string version;
     uint16_t num_version;
 };
-MINIJSON2_TYPE_META(Asset, generator, version, num_version)
+MJ2_TYPE_META(Asset, generator, version, num_version)
 
 struct Scene {
     std::string name;
-    float weight;
+    float weight = 15.0f;
     std::vector<size_t> nodes;
     std::optional<size_t> camera;
 };
-MINIJSON2_TYPE_META(Scene, name, weight, nodes, camera)
+MJ2_TYPE_META(Scene, name, weight, nodes, camera)
+MJ2_OPTIONAL_FIELDS(Scene, weight)
 
 struct Gltf {
     Asset asset;
     std::vector<Scene> scenes;
 };
-MINIJSON2_TYPE_META(Gltf, asset, scenes)
+MJ2_TYPE_META(Gltf, asset, scenes)
 
 template <typename T>
     requires requires(std::ostream& os, T a) { os << a; }
@@ -51,8 +52,9 @@ void print(const std::optional<T>& v, const std::string& path = "")
 template <structread::has_type_meta T>
 void print(const T& obj, const std::string& path = "")
 {
-    structread::for_each_field(
-        obj, [&](const char* name, const auto& field) { print(field, path + "." + name); });
+    structread::for_each_field(obj, [&](std::string_view name, const auto& field) {
+        print(field, path + "." + std::string(name));
+    });
 }
 
 int main()
@@ -67,7 +69,6 @@ int main()
             "scenes": [
                 {
                     "name": "scene A",
-                    "weight": 1, 
                     "nodes": [0, 1, 2, 3, 4]
                 },
                 {

@@ -292,10 +292,10 @@ namespace structread {
     template <typename T>
     struct type_meta;
 
-    template <typename T, typename F>
-    constexpr auto field(const char* name, F T::*f)
+    template <typename T, typename U>
+    constexpr auto field(std::string_view name, U T::*ptr)
     {
-        return std::tuple(name, f);
+        return std::tuple(name, ptr);
     }
 
     template <typename... Args>
@@ -303,15 +303,6 @@ namespace structread {
     {
         return std::tuple(std::forward<Args>(args)...);
     }
-
-    template <typename>
-    constexpr bool is_optional_impl = false;
-
-    template <typename T>
-    constexpr bool is_optional_impl<std::optional<T>> = true;
-
-    template <typename T>
-    constexpr bool is_optional = is_optional_impl<std::remove_cvref_t<T>>;
 
     template <typename T>
     using get_type_meta = type_meta<std::decay_t<T>>;
@@ -332,6 +323,32 @@ namespace structread {
             get_type_meta<T>::fields);
     }
 
+    template <typename T>
+    struct optional_fields {
+        static constexpr auto fields = std::make_tuple();
+    };
+
+    template <typename>
+    constexpr bool is_optional_type_impl = false;
+
+    template <typename T>
+    constexpr bool is_optional_type_impl<std::optional<T>> = true;
+
+    template <typename T>
+    constexpr bool is_optional_type = is_optional_type_impl<std::remove_cvref_t<T>>;
+
+    template <typename T, typename U>
+    constexpr bool is_optional(std::string_view field_name)
+    {
+        if constexpr (is_optional_type<U>) {
+            return true;
+        }
+        // char_traits<char>::compare and not strcmp, because it's constexpr
+        return std::apply(
+            [field_name](auto&&... opt_fields) { return ((field_name == opt_fields) || ...); },
+            optional_fields<T>::fields);
+    }
+
     template <has_type_meta T>
     bool from_json_impl(T& obj, ParseContext& ctx, const Token& token, const std::string& path)
     {
@@ -342,12 +359,13 @@ namespace structread {
 
         bool known_key = false;
         std::string_view key_str;
-        std::unordered_map<std::string, bool> keys_found;
+        // Maybe replace this map with an array in the future (has some complications)
+        std::unordered_map<std::string_view, bool> keys_found;
 
-        const auto apply_field = [&](auto& field) {
+        auto apply_field = [&](auto& field) {
             const auto field_name = std::get<0>(field);
             auto& obj_field = obj.*std::get<1>(field);
-            if constexpr (!is_optional<decltype(obj_field)>) {
+            if (!is_optional<T, decltype(obj_field)>(field_name)) {
                 keys_found.emplace(field_name, false);
             }
             if (key_str == field_name) {
@@ -445,9 +463,15 @@ namespace structread {
 #define MJ2_FIELDS(type, ...)                                                                      \
     MJ2_CONCATENATE(MJ2_FIELD_, MJ2_COUNT_ARGS(__VA_ARGS__))(type, __VA_ARGS__)
 
-#define MINIJSON2_TYPE_META(type, ...)                                                             \
+#define MJ2_TYPE_META(type, ...)                                                                   \
     template <>                                                                                    \
     struct minijson2::structread::type_meta<type> {                                                \
         static constexpr auto fields                                                               \
             = minijson2::structread::make_fields(MJ2_FIELDS(type, __VA_ARGS__));                   \
+    };
+
+#define MJ2_OPTIONAL_FIELDS(type, ...)                                                             \
+    template <>                                                                                    \
+    struct minijson2::structread::optional_fields<type> {                                          \
+        static constexpr auto fields = std::make_tuple(#__VA_ARGS__);                              \
     };
