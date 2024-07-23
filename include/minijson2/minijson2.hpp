@@ -411,11 +411,10 @@ namespace structread {
 }
 }
 
-// I know macros are evil, but until we have reflection there is no way to make this ergonomic
-// and robust, but to use macros.
+// These macros suck so fucking much, holy shit. PLEASE JUST GIVE US REFLECTION, IT'S BEEN 10 YEARS
+// NOW (N3996).
 
-// If you don't like the macros, you can enable structread for your type by specializing type_meta
-// like this:
+// Without these macros you would have to do this tedious garbage:
 /*
         template <>
         struct type_meta<Asset> {
@@ -426,42 +425,70 @@ namespace structread {
         };
 */
 
-#define MJ2_COUNT_ARGS(...) MJ2_COUNT_ARGS_(__VA_ARGS__, MJ2_RSEQ_N())
-#define MJ2_COUNT_ARGS_(...) MJ2_ARG_N(__VA_ARGS__)
-#define MJ2_ARG_N(_1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13, _14, _15, _16, _17, _18, \
-    _19, _20, N, ...)                                                                              \
+#define MJ2_VA_ARGS_COUNT(...)                                                                     \
+    MJ2_VA_ARGS_COUNT_IMPL(                                                                        \
+        __VA_ARGS__, 20, 19, 18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0)
+// Essentially you return the 21st argument passed to this macro. By passing varargs before that you
+// can shift towards a higher number, effectively counting arguments.
+#define MJ2_VA_ARGS_COUNT_IMPL(_1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13, _14, _15,   \
+    _16, _17, _18, _19, _20, N, ...)                                                               \
     N
-#define MJ2_RSEQ_N() 20, 19, 18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0
 
-#define MJ2_CONCATENATE(arg1, arg2) MJ2_CONCATENATE1(arg1, arg2)
-#define MJ2_CONCATENATE1(arg1, arg2) MJ2_CONCATENATE2(arg1, arg2)
-#define MJ2_CONCATENATE2(arg1, arg2) arg1##arg2
+#define MJ2_EXPAND_ARGS(macro, type, ...)                                                          \
+    MJ2_EXPAND_ARGS_IMPL(MJ2_VA_ARGS_COUNT(__VA_ARGS__), macro, type, __VA_ARGS__)
 
-// Utility macros to generate the fields
-#define MJ2_FIELD_1(type, arg) field(#arg, &type::arg)
-#define MJ2_FIELD_2(type, arg, ...) MJ2_FIELD_1(type, arg), MJ2_FIELD_1(type, __VA_ARGS__)
-#define MJ2_FIELD_3(type, arg, ...) MJ2_FIELD_1(type, arg), MJ2_FIELD_2(type, __VA_ARGS__)
-#define MJ2_FIELD_4(type, arg, ...) MJ2_FIELD_1(type, arg), MJ2_FIELD_3(type, __VA_ARGS__)
-#define MJ2_FIELD_5(type, arg, ...) MJ2_FIELD_1(type, arg), MJ2_FIELD_4(type, __VA_ARGS__)
-#define MJ2_FIELD_6(type, arg, ...) MJ2_FIELD_1(type, arg), MJ2_FIELD_5(type, __VA_ARGS__)
-#define MJ2_FIELD_7(type, arg, ...) MJ2_FIELD_1(type, arg), MJ2_FIELD_6(type, __VA_ARGS__)
-#define MJ2_FIELD_8(type, arg, ...) MJ2_FIELD_1(type, arg), MJ2_FIELD_7(type, __VA_ARGS__)
-#define MJ2_FIELD_9(type, arg, ...) MJ2_FIELD_1(type, arg), MJ2_FIELD_8(type, __VA_ARGS__)
-#define MJ2_FIELD_10(type, arg, ...) MJ2_FIELD_1(type, arg), MJ2_FIELD_9(type, __VA_ARGS__)
-#define MJ2_FIELD_11(type, arg, ...) MJ2_FIELD_1(type, arg), MJ2_FIELD_10(type, __VA_ARGS__)
-#define MJ2_FIELD_12(type, arg, ...) MJ2_FIELD_1(type, arg), MJ2_FIELD_11(type, __VA_ARGS__)
-#define MJ2_FIELD_13(type, arg, ...) MJ2_FIELD_1(type, arg), MJ2_FIELD_12(type, __VA_ARGS__)
-#define MJ2_FIELD_14(type, arg, ...) MJ2_FIELD_1(type, arg), MJ2_FIELD_13(type, __VA_ARGS__)
-#define MJ2_FIELD_15(type, arg, ...) MJ2_FIELD_1(type, arg), MJ2_FIELD_14(type, __VA_ARGS__)
-#define MJ2_FIELD_16(type, arg, ...) MJ2_FIELD_1(type, arg), MJ2_FIELD_15(type, __VA_ARGS__)
-#define MJ2_FIELD_17(type, arg, ...) MJ2_FIELD_1(type, arg), MJ2_FIELD_16(type, __VA_ARGS__)
-#define MJ2_FIELD_18(type, arg, ...) MJ2_FIELD_1(type, arg), MJ2_FIELD_17(type, __VA_ARGS__)
-#define MJ2_FIELD_19(type, arg, ...) MJ2_FIELD_1(type, arg), MJ2_FIELD_18(type, __VA_ARGS__)
-#define MJ2_FIELD_20(type, arg, ...) MJ2_FIELD_1(type, arg), MJ2_FIELD_19(type, __VA_ARGS__)
+// We have an extra level of indirection here to force MJ2_VA_ARGS_COUNT(...) to be expanded,
+// otherwise we get MJ2_EXPAND_ARGS_HELPER_MJ2_VA_ARGS_COUNT(...)(...). I have read about it a
+// couple of times and still don't really get it, but I feel like I am making myself dumber by
+// understanding it, so I don't care.
+#define MJ2_EXPAND_ARGS_IMPL(N, macro, type, ...) MJ2_EXPAND_ARGS_IMPL_(N, macro, type, __VA_ARGS__)
 
-// Select the appropriate MJ2_FIELD_X macro based on the number of arguments
-#define MJ2_FIELDS(type, ...)                                                                      \
-    MJ2_CONCATENATE(MJ2_FIELD_, MJ2_COUNT_ARGS(__VA_ARGS__))(type, __VA_ARGS__)
+#define MJ2_EXPAND_ARGS_IMPL_(N, macro, type, ...)                                                 \
+    MJ2_EXPAND_ARGS_HELPER_##N(macro, type, __VA_ARGS__)
+
+#define MJ2_EXPAND_ARGS_HELPER_0(macro, type, ...)
+#define MJ2_EXPAND_ARGS_HELPER_1(macro, type, arg, ...) macro(type, arg)
+#define MJ2_EXPAND_ARGS_HELPER_2(macro, type, arg, ...)                                            \
+    macro(type, arg), MJ2_EXPAND_ARGS_HELPER_1(macro, type, __VA_ARGS__)
+#define MJ2_EXPAND_ARGS_HELPER_3(macro, type, arg, ...)                                            \
+    macro(type, arg), MJ2_EXPAND_ARGS_HELPER_2(macro, type, __VA_ARGS__)
+#define MJ2_EXPAND_ARGS_HELPER_4(macro, type, arg, ...)                                            \
+    macro(type, arg), MJ2_EXPAND_ARGS_HELPER_3(macro, type, __VA_ARGS__)
+#define MJ2_EXPAND_ARGS_HELPER_5(macro, type, arg, ...)                                            \
+    macro(type, arg), MJ2_EXPAND_ARGS_HELPER_4(macro, type, __VA_ARGS__)
+#define MJ2_EXPAND_ARGS_HELPER_6(macro, type, arg, ...)                                            \
+    macro(type, arg), MJ2_EXPAND_ARGS_HELPER_5(macro, type, __VA_ARGS__)
+#define MJ2_EXPAND_ARGS_HELPER_7(macro, type, arg, ...)                                            \
+    macro(type, arg), MJ2_EXPAND_ARGS_HELPER_6(macro, type, __VA_ARGS__)
+#define MJ2_EXPAND_ARGS_HELPER_8(macro, type, arg, ...)                                            \
+    macro(type, arg), MJ2_EXPAND_ARGS_HELPER_7(macro, type, __VA_ARGS__)
+#define MJ2_EXPAND_ARGS_HELPER_9(macro, type, arg, ...)                                            \
+    macro(type, arg), MJ2_EXPAND_ARGS_HELPER_8(macro, type, __VA_ARGS__)
+#define MJ2_EXPAND_ARGS_HELPER_10(macro, type, arg, ...)                                           \
+    macro(type, arg), MJ2_EXPAND_ARGS_HELPER_9(macro, type, __VA_ARGS__)
+#define MJ2_EXPAND_ARGS_HELPER_11(macro, type, arg, ...)                                           \
+    macro(type, arg), MJ2_EXPAND_ARGS_HELPER_10(macro, type, __VA_ARGS__)
+#define MJ2_EXPAND_ARGS_HELPER_12(macro, type, arg, ...)                                           \
+    macro(type, arg), MJ2_EXPAND_ARGS_HELPER_11(macro, type, __VA_ARGS__)
+#define MJ2_EXPAND_ARGS_HELPER_13(macro, type, arg, ...)                                           \
+    macro(type, arg), MJ2_EXPAND_ARGS_HELPER_12(macro, type, __VA_ARGS__)
+#define MJ2_EXPAND_ARGS_HELPER_14(macro, type, arg, ...)                                           \
+    macro(type, arg), MJ2_EXPAND_ARGS_HELPER_13(macro, type, __VA_ARGS__)
+#define MJ2_EXPAND_ARGS_HELPER_15(macro, type, arg, ...)                                           \
+    macro(type, arg), MJ2_EXPAND_ARGS_HELPER_14(macro, type, __VA_ARGS__)
+#define MJ2_EXPAND_ARGS_HELPER_16(macro, type, arg, ...)                                           \
+    macro(type, arg), MJ2_EXPAND_ARGS_HELPER_15(macro, type, __VA_ARGS__)
+#define MJ2_EXPAND_ARGS_HELPER_17(macro, type, arg, ...)                                           \
+    macro(type, arg), MJ2_EXPAND_ARGS_HELPER_16(macro, type, __VA_ARGS__)
+#define MJ2_EXPAND_ARGS_HELPER_18(macro, type, arg, ...)                                           \
+    macro(type, arg), MJ2_EXPAND_ARGS_HELPER_17(macro, type, __VA_ARGS__)
+#define MJ2_EXPAND_ARGS_HELPER_19(macro, type, arg, ...)                                           \
+    macro(type, arg), MJ2_EXPAND_ARGS_HELPER_18(macro, type, __VA_ARGS__)
+#define MJ2_EXPAND_ARGS_HELPER_20(macro, type, arg, ...)                                           \
+    macro(type, arg), MJ2_EXPAND_ARGS_HELPER_19(macro, type, __VA_ARGS__)
+
+#define MJ2_FIELD(type, field_name) minijson2::structread::field(#field_name, &type::field_name)
+#define MJ2_FIELDS(type, ...) MJ2_EXPAND_ARGS(MJ2_FIELD, type, __VA_ARGS__)
 
 #define MJ2_TYPE_META(type, ...)                                                                   \
     template <>                                                                                    \
@@ -470,8 +497,11 @@ namespace structread {
             = minijson2::structread::make_fields(MJ2_FIELDS(type, __VA_ARGS__));                   \
     };
 
+#define MJ2_OPTIONAL_FIELD(type, field_name) #field_name
+#define MJ2_OPTIONAL_FIELDS_(...) MJ2_EXPAND_ARGS(MJ2_OPTIONAL_FIELD, type, __VA_ARGS__)
+
 #define MJ2_OPTIONAL_FIELDS(type, ...)                                                             \
     template <>                                                                                    \
     struct minijson2::structread::optional_fields<type> {                                          \
-        static constexpr auto fields = std::make_tuple(#__VA_ARGS__);                              \
+        static constexpr auto fields = std::make_tuple(MJ2_OPTIONAL_FIELDS_(type, __VA_ARGS__));   \
     };
