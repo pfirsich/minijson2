@@ -492,18 +492,18 @@ namespace structread {
 #define MJ2_FIELD(type, field_name) minijson2::structread::field(#field_name, &type::field_name)
 #define MJ2_FIELDS(type, ...) MJ2_EXPAND_ARGS(MJ2_FIELD, type, __VA_ARGS__)
 
-#define MJ2_TYPE_META(type, ...)                                                                   \
+#define MJ2_TYPE_META(TYPE_, ...)                                                                  \
     template <>                                                                                    \
-    struct minijson2::structread::type_meta<type> {                                                \
+    struct minijson2::structread::type_meta<TYPE_> {                                               \
         static constexpr auto fields                                                               \
-            = minijson2::structread::make_fields(MJ2_FIELDS(type, __VA_ARGS__));                   \
+            = minijson2::structread::make_fields(MJ2_FIELDS(TYPE_, __VA_ARGS__));                  \
     };
 
 #define MJ2_OPTIONAL_FIELD(type, field_name) #field_name
-#define MJ2_OPTIONAL_FIELDS_(...) MJ2_EXPAND_ARGS(MJ2_OPTIONAL_FIELD, type, __VA_ARGS__)
+#define MJ2_OPTIONAL_FIELDS_(type, ...) MJ2_EXPAND_ARGS(MJ2_OPTIONAL_FIELD, type, __VA_ARGS__)
 
-#define MJ2_OPTIONAL_FIELDS(type, ...)                                                             \
+#define MJ2_OPTIONAL_FIELDS(TYPE_, ...)                                                            \
     template <>                                                                                    \
-    struct minijson2::structread::optional_fields<type> {                                          \
-        static constexpr auto fields = std::make_tuple(MJ2_OPTIONAL_FIELDS_(type, __VA_ARGS__));   \
+    struct minijson2::structread::optional_fields<TYPE_> {                                         \
+        static constexpr auto fields = std::make_tuple(MJ2_OPTIONAL_FIELDS_(TYPE_, __VA_ARGS__));  \
     };
