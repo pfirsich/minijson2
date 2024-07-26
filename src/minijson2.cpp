@@ -204,7 +204,7 @@ Token Parser::next()
 
     switch (expect) {
     case ExpectNext::Error:
-        return error_token("Abort after previous error");
+        return Token(cursor_, error_message_);
     case ExpectNext::Value:
         return on_value();
     case ExpectNext::ObjectKey:
@@ -216,6 +216,30 @@ Token Parser::next()
     default:
         std::abort();
     }
+}
+
+bool Parser::skip(const Token& token)
+{
+    assert(token.type() != Token::Type::EndArray && token.type() != Token::Type::EndObject);
+    if (token.type() == Token::Type::Error) {
+        return false;
+    }
+    if (token.type() == Token::Type::Array) {
+        while (const auto elem = next()) {
+            if (!skip(elem)) {
+                return false;
+            }
+        }
+    }
+    if (token.type() == Token::Type::Object) {
+        while (const auto key = next()) {
+            const auto value = next();
+            if (!skip(value)) {
+                return false;
+            }
+        }
+    }
+    return true;
 }
 
 std::string_view Parser::parse_string(const Token& token, bool escape_in_place)
@@ -449,7 +473,8 @@ Token Parser::error_token(const char* message)
 {
     // When calling error_token(), cursor_ should always point to the error
     expect_next_.push_back(ExpectNext::Error); // return errors forever
-    return Token(cursor_, message);
+    error_message_ = message;
+    return Token(cursor_, error_message_);
 }
 
 namespace structread {

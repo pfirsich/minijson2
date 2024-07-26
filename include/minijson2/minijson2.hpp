@@ -88,6 +88,7 @@ public:
     size_t get_location(const Token& token) const;
 
     Token next();
+    bool skip(const Token& token);
 
     // Don't call this function twice for the same token, as it might escape the same string twice
     // (which would be wrong).
@@ -122,6 +123,7 @@ private:
     std::string_view input_;
     size_t cursor_ = 0;
     std::vector<ExpectNext> expect_next_;
+    const char* error_message_ = nullptr;
 };
 
 namespace structread {
