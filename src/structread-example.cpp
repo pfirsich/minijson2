@@ -20,6 +20,12 @@ struct Scene {
 MJ2_TYPE_META(Scene, name, weight, nodes, camera)
 MJ2_OPTIONAL_FIELDS(Scene, weight)
 
+template <>
+struct structread::key_handlers<Scene> {
+    static constexpr auto handlers = std::make_tuple(
+        structread::key_handler("ignored", structread::key_handler_ignore<Scene> {}));
+};
+
 struct Gltf {
     Asset asset;
     std::vector<Scene> scenes;
@@ -69,7 +75,8 @@ int main()
             "scenes": [
                 {
                     "name": "scene A",
-                    "nodes": [0, 1, 2, 3, 4]
+                    "nodes": [0, 1, 2, 3, 4],
+                    "ignored": "secrets!"
                 },
                 {
                     "name": "scene B",

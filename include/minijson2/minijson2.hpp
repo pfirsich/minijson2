@@ -2,10 +2,12 @@
 
 #include <cassert>
 #include <concepts>
+#include <functional>
 #include <limits>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <unordered_map>
 #include <vector>
 
@@ -351,6 +353,46 @@ namespace structread {
             optional_fields<T>::fields);
     }
 
+    template <typename Func>
+    constexpr std::tuple<std::string_view, Func> key_handler(std::string_view key_name, Func func)
+    {
+        return { key_name, std::move(func) };
+    }
+
+    template <typename T>
+    struct key_handlers {
+        static constexpr auto handlers = std::make_tuple();
+    };
+
+    template <typename T>
+    struct key_handler_ignore {
+        bool operator()(T&, ParseContext& ctx, const Token& token, const std::string&)
+        {
+            return ctx.parser.skip(token);
+        };
+    };
+
+    template <typename T>
+    auto get_key_handler(std::string_view key_name)
+    {
+        std::function<bool(
+            T & obj, ParseContext & ctx, const Token& token, const std::string& path)>
+            handler;
+        auto apply_handler = [key_name, &handler](auto& key_handler) -> bool {
+            const auto name = std::get<0>(key_handler);
+            auto& func = std::get<1>(key_handler);
+            if (key_name == name) {
+                handler = func;
+                return true;
+            }
+            return false;
+        };
+
+        std::apply([&](auto&&... handlers) { return (apply_handler(handlers) || ...); },
+            key_handlers<T>::handlers);
+        return handler;
+    }
+
     template <has_type_meta T>
     bool from_json_impl(T& obj, ParseContext& ctx, const Token& token, const std::string& path)
     {
@@ -386,8 +428,15 @@ namespace structread {
             key_str = ctx.parser.parse_string(key);
             known_key = false;
 
-            if (!std::apply([&](auto&... fields_args) { return (apply_field(fields_args) && ...); },
-                    get_type_meta<T>::fields)) {
+            auto handler = get_key_handler<T>(key_str);
+            if (handler) {
+                known_key = true;
+                if (!handler(obj, ctx, ctx.parser.next(), path)) {
+                    return false;
+                }
+            } else if (!std::apply(
+                           [&](auto&... fields_args) { return (apply_field(fields_args) && ...); },
+                           get_type_meta<T>::fields)) {
                 return false;
             }
 
