@@ -297,6 +297,34 @@ namespace structread {
         return true;
     }
 
+    template <typename T, size_t N>
+    bool from_json_impl(
+        std::array<T, N>& arr, ParseContext& ctx, const Token& token, const std::string& path)
+    {
+        const std::string type_name = "array of size " + std::to_string(N);
+        if (!check_type(ctx, token, path, Token::Type::Array, type_name)) {
+            return false;
+        }
+        const auto array_start = ctx.parser.get_location(token);
+        size_t i = 0;
+        auto elem = ctx.parser.next();
+        while (elem && i < N) {
+            const auto val_path = concat_string(path, "[", std::to_string(i), "]");
+            if (!from_json(arr[i], ctx, elem, val_path)) {
+                return false;
+            }
+            i++;
+            elem = ctx.parser.next();
+        }
+        if (i != N) {
+            return ctx.set_error(array_start, path + "must be " + type_name);
+        }
+        if (elem.type() == Token::Type::Error) {
+            return ctx.set_error(elem);
+        }
+        return true;
+    }
+
     template <typename T>
     struct type_meta;
 
