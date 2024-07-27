@@ -137,6 +137,8 @@ Context get_context(std::string_view str, size_t cursor)
     };
 }
 
+Token::Token() : Token(0, "Default constructed token") { }
+
 // Regular token
 Token::Token(Type type, std::string_view str) : str_(str.data()), length_(str.size()), type_(type)
 {

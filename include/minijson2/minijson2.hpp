@@ -44,6 +44,10 @@ struct Token {
         Error,
     };
 
+    // Default constructed, just for convenience. Don't use this for anything, except assigning to
+    // it later.
+    Token();
+
     // Regular token
     Token(Type type, std::string_view str);
 
