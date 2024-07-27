@@ -370,7 +370,8 @@ namespace structread {
 
     template <typename T>
     struct key_handler_ignore {
-        bool operator()(T&, ParseContext& ctx, const Token& token, const std::string&)
+        bool operator()(
+            std::string_view, T&, ParseContext& ctx, const Token& token, const std::string&)
         {
             return ctx.parser.skip(token);
         };
@@ -379,8 +380,8 @@ namespace structread {
     template <typename T>
     auto get_key_handler(std::string_view key_name)
     {
-        std::function<bool(
-            T & obj, ParseContext & ctx, const Token& token, const std::string& path)>
+        std::function<bool(std::string_view key, T & obj, ParseContext & ctx, const Token& token,
+            const std::string& path)>
             handler;
         auto apply_handler = [key_name, &handler](auto& key_handler) -> bool {
             const auto name = std::get<0>(key_handler);
@@ -435,7 +436,7 @@ namespace structread {
             auto handler = get_key_handler<T>(key_str);
             if (handler) {
                 known_key = true;
-                if (!handler(obj, ctx, ctx.parser.next(), path)) {
+                if (!handler(key_str, obj, ctx, ctx.parser.next(), path)) {
                     return false;
                 }
             } else if (!std::apply(
